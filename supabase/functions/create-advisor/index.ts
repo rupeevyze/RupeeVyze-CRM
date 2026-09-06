@@ -2,17 +2,26 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("MY_SERVICE_ROLE_KEY")!;
-console.log("Service role key present:", !!SERVICE_ROLE_KEY, "length:", SERVICE_ROLE_KEY?.length || 0);
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   try {
     if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: corsHeaders });
     }
 
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing authorization header" }), { status: 401 });
+      return new Response(JSON.stringify({ error: "Missing authorization header" }), { status: 401, headers: corsHeaders });
     }
 
     const callerClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -21,8 +30,7 @@ Deno.serve(async (req) => {
 
     const { data: userData, error: userErr } = await callerClient.auth.getUser();
     if (userErr || !userData?.user) {
-      console.error("Auth check failed:", userErr?.message);
-      return new Response(JSON.stringify({ error: "Invalid session" }), { status: 401 });
+      return new Response(JSON.stringify({ error: "Invalid session" }), { status: 401, headers: corsHeaders });
     }
 
     const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -32,17 +40,13 @@ Deno.serve(async (req) => {
       .eq("id", userData.user.id)
       .single();
 
-    console.log("Caller user id:", userData.user.id);
-    console.log("Profile lookup result:", JSON.stringify(callerProfile), "error:", profileErr?.message);
-
     if (profileErr || callerProfile?.role !== "admin") {
-      console.error("Admin check failed. profileErr:", profileErr?.message, "role found:", callerProfile?.role);
-      return new Response(JSON.stringify({ error: "Only admins can create advisor accounts" }), { status: 403 });
+      return new Response(JSON.stringify({ error: "Only admins can create advisor accounts" }), { status: 403, headers: corsHeaders });
     }
 
     const { name, email, password, candidateId } = await req.json();
     if (!name || !email || !password) {
-      return new Response(JSON.stringify({ error: "name, email, and password are required" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "name, email, and password are required" }), { status: 400, headers: corsHeaders });
     }
 
     const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
@@ -52,7 +56,7 @@ Deno.serve(async (req) => {
     });
 
     if (createErr || !newUser?.user) {
-      return new Response(JSON.stringify({ error: createErr?.message || "Failed to create user" }), { status: 400 });
+      return new Response(JSON.stringify({ error: createErr?.message || "Failed to create user" }), { status: 400, headers: corsHeaders });
     }
 
     const { error: insertErr } = await adminClient.from("profiles").insert({
@@ -65,14 +69,14 @@ Deno.serve(async (req) => {
 
     if (insertErr) {
       await adminClient.auth.admin.deleteUser(newUser.user.id);
-      return new Response(JSON.stringify({ error: insertErr.message }), { status: 400 });
+      return new Response(JSON.stringify({ error: insertErr.message }), { status: 400, headers: corsHeaders });
     }
 
     return new Response(
       JSON.stringify({ success: true, userId: newUser.user.id }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: corsHeaders });
   }
 });
