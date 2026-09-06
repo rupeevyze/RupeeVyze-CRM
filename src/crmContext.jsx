@@ -508,6 +508,80 @@ export function CrmProvider({ children }) {
     }
   }, [refreshCrmData, isAdvisor, currentUser, candidates]);
 
+  // ---------------- Client add/edit/delete approval workflow ----------------
+
+  // Advisors submit new clients for admin approval; admins can add directly.
+  const submitClient = useCallback(async (payload) => {
+    try {
+      const withAdvisor = isAdvisor
+        ? { ...payload, assignedAdvisorId: currentUser?.id, leadType: payload.leadType || "Insurance Customer" }
+        : payload;
+      const result = await candidatesApi.submitClientForApproval(withAdvisor, currentUser?.authId || currentUser?.id);
+      setCandidates((prev) => [...prev, result]);
+      return result;
+    } catch (err) {
+      console.error("Failed to submit client in Supabase:", err.message);
+      throw err;
+    }
+  }, [isAdvisor, currentUser]);
+
+  // Advisors propose edits to an existing client (admin edits go live immediately
+  // via updateCandidate above); admins approve/reject via approveClientRequest.
+  const submitClientEdit = useCallback(async (candidateId, changes) => {
+    try {
+      const result = await candidatesApi.submitEditForApproval(candidateId, changes, currentUser?.authId || currentUser?.id);
+      setCandidates((prev) => prev.map((c) => String(c.id) === String(candidateId) ? result : c));
+      return result;
+    } catch (err) {
+      console.error("Failed to submit client edit in Supabase:", err.message);
+      throw err;
+    }
+  }, [currentUser]);
+
+  const submitClientDelete = useCallback(async (candidateId) => {
+    try {
+      const result = await candidatesApi.submitDeleteForApproval(candidateId, currentUser?.authId || currentUser?.id);
+      setCandidates((prev) => prev.map((c) => String(c.id) === String(candidateId) ? result : c));
+      return result;
+    } catch (err) {
+      console.error("Failed to submit client delete in Supabase:", err.message);
+      throw err;
+    }
+  }, [currentUser]);
+
+  // Admin-only: approve or reject a pending add/edit/delete request.
+  const approveClientRequest = useCallback(async (candidateId) => {
+    if (!isAdmin) return;
+    try {
+      const result = await candidatesApi.approveRequest(candidateId);
+      if (result.deleted) {
+        setCandidates((prev) => prev.filter((c) => String(c.id) !== String(candidateId)));
+      } else {
+        setCandidates((prev) => prev.map((c) => String(c.id) === String(candidateId) ? result : c));
+      }
+      return result;
+    } catch (err) {
+      console.error("Failed to approve client request in Supabase:", err.message);
+      throw err;
+    }
+  }, [isAdmin]);
+
+  const rejectClientRequest = useCallback(async (candidateId) => {
+    if (!isAdmin) return;
+    try {
+      const result = await candidatesApi.rejectRequest(candidateId);
+      if (result.deleted) {
+        setCandidates((prev) => prev.filter((c) => String(c.id) !== String(candidateId)));
+      } else {
+        setCandidates((prev) => prev.map((c) => String(c.id) === String(candidateId) ? result : c));
+      }
+      return result;
+    } catch (err) {
+      console.error("Failed to reject client request in Supabase:", err.message);
+      throw err;
+    }
+  }, [isAdmin]);
+
   const addClient = useCallback(async (client) => {
     try {
       const result = await clientsApi.create(client);
@@ -832,6 +906,11 @@ export function CrmProvider({ children }) {
     addCandidate,
     importCandidates,
     deleteCandidate,
+    submitClient,
+    submitClientEdit,
+    submitClientDelete,
+    approveClientRequest,
+    rejectClientRequest,
     addClient,
     updateClient,
     markFollowUpDone,
@@ -887,7 +966,7 @@ export function CrmProvider({ children }) {
     clearAllCrmData,
     clearLeadData
   }), [candidates, clients, settings, selectedConfig, selectedConfigId, performanceRecords, overridePayoutRecords, policies, claims, rewards, serviceRequests, roles, permissions, loading, teamMembers, derivedRecruiterNames, activeAdvisors, performanceSummary, overrideRecordsDerived, importHistory,
-    updateCandidateStage, updateCandidate, addCandidate, importCandidates, deleteCandidate, addClient, updateClient, markFollowUpDone, updateCandidateNote, setSettings, addPerformanceRecord, updatePerformanceRecord, saveOverridePayoutRecords, importPolicies, importClaims, importTeamMembers, importRewards, importFollowups, importServiceRequests, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole,     addPermission, updatePermission, deletePermission, addImportRecord, removeImportRecord, removeImportedCandidates, clearAllCrmData, clearLeadData]);
+    updateCandidateStage, updateCandidate, addCandidate, importCandidates, deleteCandidate, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, addClient, updateClient, markFollowUpDone, updateCandidateNote, setSettings, addPerformanceRecord, updatePerformanceRecord, saveOverridePayoutRecords, importPolicies, importClaims, importTeamMembers, importRewards, importFollowups, importServiceRequests, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole,     addPermission, updatePermission, deletePermission, addImportRecord, removeImportRecord, removeImportedCandidates, clearAllCrmData, clearLeadData]);
 
   return <CrmContext.Provider value={value}>{children}</CrmContext.Provider>;
 }

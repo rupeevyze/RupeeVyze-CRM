@@ -1,11 +1,15 @@
 import { useMemo, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   Box,
   Button,
   Card,
   CardContent,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   FormControl,
   Grid,
   InputLabel,
@@ -20,24 +24,45 @@ import {
   TableHead,
   TableRow,
   TextField,
-  Typography
+  Typography,
+  Alert,
+  CircularProgress,
+  Tooltip,
 } from "@mui/material";
 import PersonIcon from "@mui/icons-material/Person";
 import VerifiedUserIcon from "@mui/icons-material/VerifiedUser";
 import EventIcon from "@mui/icons-material/Event";
+import AddIcon from "@mui/icons-material/Add";
+import CheckIcon from "@mui/icons-material/Check";
+import CloseIcon from "@mui/icons-material/Close";
 import { useCrm } from "../../crmContext.jsx";
 import { useAuth } from "../../authContext.jsx";
 
+const emptyForm = { name: "", mobile: "", city: "", email: "" };
+function ApprovalBadge({ status }) {
+  if (!status || status === "approved") return null;
+  const label = status === "pending_add" ? "Pending Add" : status === "pending_edit" ? "Pending Edit" : "Pending Delete";
+  return <Chip label={label} size="small" color="warning" sx={{ ml: 1 }} />;
+}
+
 export default function ClientsList() {
-  const navigate = useNavigate();
-  const { candidates: allCandidates } = useCrm();
+  const { candidates: allCandidates, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, addCandidate, updateCandidate, deleteCandidate } = useCrm();
   const { currentUser, isAdmin, isAdvisor } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
 
+  const [addOpen, setAddOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null); // candidate being edited
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [formSuccess, setFormSuccess] = useState("");
+  const [actionError, setActionError] = useState("");
+
   const activeClientCandidates = useMemo(() => {
     let list = (allCandidates || []).filter(
-      (c) => (c.leadType === "Insurance Customer" || !c.leadType) && c.workflowStage === "Active Client"
+      (c) => (c.leadType === "Insurance Customer" || !c.leadType) &&
+        (c.workflowStage === "Active Client" || c.approvalStatus === "pending_add")
     );
     if (isAdvisor && currentUser) {
       list = list.filter((c) => String(c.assignedAdvisorId || "") === String(currentUser.id || ""));
@@ -53,14 +78,10 @@ export default function ClientsList() {
       finalStatus: c.leadStatus || "Active Client",
       leadSource: c.leadSource || c.source || "",
       email: c.email || "",
-      policyTypeInterest: c.policyTypeInterest || "",
-      nextFollowUpDate: c.nextFollowUp || "",
-      followUpStatus: c.followUp?.status || "",
-      policyIssued: c.policyIssued || false,
-      kycStarted: c.kycStarted || false,
-      activity: c.activities || [],
-      priority: c.priority || "Medium",
-      dateReceived: c.createdDate || ""
+      dateReceived: c.createdDate || "",
+      approvalStatus: c.approvalStatus || "approved",
+      pendingData: c.pendingData || null,
+      raw: c,
     }));
   }, [allCandidates, currentUser, isAdvisor]);
 
@@ -79,24 +100,135 @@ export default function ClientsList() {
     const active = summaryClients.filter((client) => (client.finalStatus || "Active Client") === "Active Client").length;
     const currentMonth = new Date().toISOString().slice(0, 7);
     const newClients = summaryClients.filter((client) => client.dateReceived && client.dateReceived.startsWith(currentMonth)).length;
-    const inactive = summaryClients.filter((client) => (client.finalStatus || "Active Client") === "Lost" || (client.finalStatus || "Active Client") === "Follow-up Pending").length;
+    const pending = summaryClients.filter((client) => client.approvalStatus !== "approved").length;
 
     return [
       { label: "Total Clients", value: summaryClients.length, icon: PersonIcon, color: "#2563eb" },
       { label: "Active Clients", value: active, icon: VerifiedUserIcon, color: "#16a34a" },
       { label: "New Clients", value: newClients, icon: EventIcon, color: "#d97706" },
-      { label: "Inactive Clients", value: inactive, icon: PersonIcon, color: "#7c3aed" }
+      { label: "Pending Approval", value: pending, icon: PersonIcon, color: "#7c3aed" }
     ];
   }, [summaryClients]);
 
+  const openAdd = () => {
+    setForm(emptyForm);
+    setFormError("");
+    setFormSuccess("");
+    setAddOpen(true);
+  };
+
+  const openEdit = (client) => {
+    setEditTarget(client);
+    setForm({ name: client.name, mobile: client.mobile, city: client.city, email: client.email });
+    setFormError("");
+    setFormSuccess("");
+  };
+
+  const closeDialogs = () => {
+    if (submitting) return;
+    setAddOpen(false);
+    setEditTarget(null);
+  };
+
+  const handleAddSubmit = async () => {
+    setFormError("");
+    if (!form.name || !form.mobile) {
+      setFormError("Name and mobile are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: form.name,
+        mobile: form.mobile,
+        city: form.city,
+        email: form.email,
+        workflowStage: "Active Client",
+        leadStatus: "Active Client",
+        createdDate: new Date().toISOString().slice(0, 10),
+      };
+      if (isAdmin) {
+        await addCandidate(payload);
+        setFormSuccess("Client added.");
+      } else {
+        await submitClient(payload);
+        setFormSuccess("Submitted for admin approval.");
+      }
+      setTimeout(() => setAddOpen(false), 900);
+    } catch (err) {
+      setFormError(err.message || "Failed to add client.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditSubmit = async () => {
+    setFormError("");
+    if (!form.name || !form.mobile) {
+      setFormError("Name and mobile are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (isAdmin) {
+        await updateCandidate(editTarget.candidateId, form);
+        setFormSuccess("Client updated.");
+      } else {
+        await submitClientEdit(editTarget.candidateId, form);
+        setFormSuccess("Edit submitted for admin approval.");
+      }
+      setTimeout(() => setEditTarget(null), 900);
+    } catch (err) {
+      setFormError(err.message || "Failed to submit edit.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteRequest = async (client) => {
+    setActionError("");
+    try {
+      if (isAdmin) {
+        await deleteCandidate(client.candidateId);
+      } else {
+        await submitClientDelete(client.candidateId);
+      }
+    } catch (err) {
+      setActionError(err.message || "Failed to delete/submit delete request.");
+    }
+  };
+
+  const handleApprove = async (client) => {
+    setActionError("");
+    try {
+      await approveClientRequest(client.candidateId);
+    } catch (err) {
+      setActionError(err.message || "Failed to approve.");
+    }
+  };
+
+  const handleReject = async (client) => {
+    setActionError("");
+    try {
+      await rejectClientRequest(client.candidateId);
+    } catch (err) {
+      setActionError(err.message || "Failed to reject.");
+    }
+  };
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Box>
-        <Typography variant="h4" sx={{ fontWeight: 700, color: "#0f172a" }}>Client Portfolio</Typography>
-        <Typography variant="body1" sx={{ color: "#475569" }}>
-          A professional client directory with status, advisor ownership and servicing context.
-        </Typography>
+      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 2 }}>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 700, color: "#0f172a" }}>Client Portfolio</Typography>
+          <Typography variant="body1" sx={{ color: "#475569" }}>
+            A professional client directory with status, advisor ownership and servicing context.
+          </Typography>
+        </Box>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={openAdd}>Add Client</Button>
       </Box>
+
+      {actionError && <Alert severity="error" onClose={() => setActionError("")}>{actionError}</Alert>}
 
       <Grid container spacing={2}>
         {summaryCards.map((card) => {
@@ -158,28 +290,101 @@ export default function ClientsList() {
                   <TableCell colSpan={7} sx={{ textAlign: "center", py: 4, color: "#64748b" }}>No records found</TableCell>
                 </TableRow>
               ) : (
-                filteredClients.map((client) => (
-                  <TableRow key={client.clientId || client.id} hover>
-                    <TableCell>{client.clientId || client.id}</TableCell>
-                    <TableCell>{client.name}</TableCell>
-                    <TableCell>{client.mobile}</TableCell>
-                    <TableCell>{client.city}</TableCell>
-                    <TableCell>{client.advisorAssigned}</TableCell>
-                    <TableCell>
-                      <Chip label={client.finalStatus || "Active Client"} size="small" color={client.finalStatus === "Active Client" ? "success" : client.finalStatus === "Lost" ? "error" : "info"} />
-                    </TableCell>
-                    <TableCell>
-                      <Stack direction="row" spacing={1}>
-                        <Link className="button secondary" to={`/adviser/profile/${client.candidateId}`}>View</Link>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))
+                filteredClients.map((client) => {
+                  const canEditDelete = isAdmin || (isAdvisor && String(client.assignedAdvisorId) === String(currentUser?.id));
+                  const hasPending = client.approvalStatus !== "approved";
+                  return (
+                    <TableRow key={client.clientId || client.candidateId} hover>
+                      <TableCell>{client.clientId || client.candidateId}</TableCell>
+                      <TableCell>{client.name}</TableCell>
+                      <TableCell>{client.mobile}</TableCell>
+                      <TableCell>{client.city}</TableCell>
+                      <TableCell>{client.advisorAssigned}</TableCell>
+                      <TableCell>
+                        <Chip label={client.finalStatus || "Active Client"} size="small" color={client.finalStatus === "Active Client" ? "success" : client.finalStatus === "Lost" ? "error" : "info"} />
+                        <ApprovalBadge status={client.approvalStatus} />
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Link className="button secondary" to={`/adviser/profile/${client.candidateId}`}>View</Link>
+                          {canEditDelete && !hasPending && (
+                            <>
+                              <Button size="small" variant="outlined" onClick={() => openEdit(client)}>Edit</Button>
+                              <Button size="small" variant="text" color="error" onClick={() => handleDeleteRequest(client)}>Delete</Button>
+                            </>
+                          )}
+                          {isAdmin && hasPending && (
+                            <>
+                              <Tooltip title="Approve">
+                                <Button size="small" variant="contained" color="success" onClick={() => handleApprove(client)}><CheckIcon fontSize="small" /></Button>
+                              </Tooltip>
+                              <Tooltip title="Reject">
+                                <Button size="small" variant="outlined" color="error" onClick={() => handleReject(client)}><CloseIcon fontSize="small" /></Button>
+                              </Tooltip>
+                            </>
+                          )}
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
         </TableContainer>
       </Paper>
+
+      {/* Add Client dialog */}
+      <Dialog open={addOpen} onClose={closeDialogs} maxWidth="sm" fullWidth>
+        <DialogTitle>Add Client</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            {isAdvisor && (
+              <Typography variant="body2" color="text.secondary">
+                This client will be submitted for admin approval before it appears live in the system.
+              </Typography>
+            )}
+            {formError && <Alert severity="error">{formError}</Alert>}
+            {formSuccess && <Alert severity="success">{formSuccess}</Alert>}
+            <TextField label="Full Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="Mobile" value={form.mobile} onChange={(e) => setForm((f) => ({ ...f, mobile: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="City" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} disabled={submitting} fullWidth />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeDialogs} disabled={submitting}>Close</Button>
+          <Button onClick={handleAddSubmit} variant="contained" disabled={submitting} startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}>
+            {submitting ? "Submitting..." : isAdvisor ? "Submit for Approval" : "Add Client"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Client dialog */}
+      <Dialog open={Boolean(editTarget)} onClose={closeDialogs} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit Client</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            {isAdvisor && (
+              <Typography variant="body2" color="text.secondary">
+                These changes will be submitted for admin approval before they go live.
+              </Typography>
+            )}
+            {formError && <Alert severity="error">{formError}</Alert>}
+            {formSuccess && <Alert severity="success">{formSuccess}</Alert>}
+            <TextField label="Full Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="Mobile" value={form.mobile} onChange={(e) => setForm((f) => ({ ...f, mobile: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="City" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} disabled={submitting} fullWidth />
+            <TextField label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} disabled={submitting} fullWidth />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeDialogs} disabled={submitting}>Close</Button>
+          <Button onClick={handleEditSubmit} variant="contained" disabled={submitting} startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}>
+            {submitting ? "Submitting..." : isAdvisor ? "Submit for Approval" : "Save Changes"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

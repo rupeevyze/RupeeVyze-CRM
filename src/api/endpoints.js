@@ -68,6 +68,10 @@ function rowToCandidate(r) {
     communication: r.communication || [],
     tasks: r.tasks || [],
     followUp: r.follow_up || {},
+    approvalStatus: r.approval_status || "approved",
+    pendingData: r.pending_data || null,
+    requestedBy: r.requested_by || null,
+    requestedAt: r.requested_at || null,
   };
 }
 
@@ -129,6 +133,110 @@ export const candidatesApi = {
     const { data, error } = await supabase.from("candidates").insert(rows).select();
     throwIfError(error);
     return { imported: (data || []).length, skipped: 0, records: (data || []).map(rowToCandidate) };
+  },
+
+  // ---------------- Client add/edit/delete approval workflow ----------------
+
+  // Advisor submits a brand-new client; it's created immediately but flagged
+  // pending_add so it doesn't count as live until an admin approves it.
+  async submitClientForApproval(payload, requestedByUserId) {
+    const row = {
+      ...candidateToRow(payload),
+      approval_status: "pending_add",
+      requested_by: requestedByUserId ? String(requestedByUserId) : null,
+      requested_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from("candidates").insert(row).select().single();
+    throwIfError(error);
+    return rowToCandidate(data);
+  },
+
+  // Advisor proposes changes to an existing (already-approved) client.
+  // The live `data` columns are left untouched; the proposal sits in
+  // pending_data until an admin approves or rejects it.
+  async submitEditForApproval(id, proposedChanges, requestedByUserId) {
+    const { data, error } = await supabase
+      .from("candidates")
+      .update({
+        pending_data: proposedChanges,
+        approval_status: "pending_edit",
+        requested_by: requestedByUserId ? String(requestedByUserId) : null,
+        requested_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    throwIfError(error);
+    return rowToCandidate(data);
+  },
+
+  // Advisor requests deletion; the record stays visible (flagged) until an
+  // admin approves the removal.
+  async submitDeleteForApproval(id, requestedByUserId) {
+    const { data, error } = await supabase
+      .from("candidates")
+      .update({
+        approval_status: "pending_delete",
+        requested_by: requestedByUserId ? String(requestedByUserId) : null,
+        requested_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    throwIfError(error);
+    return rowToCandidate(data);
+  },
+
+  // Admin approves a pending add/edit/delete.
+  async approveRequest(id) {
+    const { data: existing, error: fetchErr } = await supabase.from("candidates").select("*").eq("id", id).single();
+    throwIfError(fetchErr);
+
+    if (existing.approval_status === "pending_delete") {
+      const { error } = await supabase.from("candidates").delete().eq("id", id);
+      throwIfError(error);
+      return { deleted: true, id };
+    }
+
+    if (existing.approval_status === "pending_edit") {
+      const row = { ...candidateToRow({ ...rowToCandidate(existing), ...existing.pending_data }), approval_status: "approved", pending_data: null, requested_by: null, requested_at: null };
+      const { data, error } = await supabase.from("candidates").update(row).eq("id", id).select().single();
+      throwIfError(error);
+      return rowToCandidate(data);
+    }
+
+    // pending_add
+    const { data, error } = await supabase
+      .from("candidates")
+      .update({ approval_status: "approved", requested_by: null, requested_at: null })
+      .eq("id", id)
+      .select()
+      .single();
+    throwIfError(error);
+    return rowToCandidate(data);
+  },
+
+  // Admin rejects a pending add/edit/delete.
+  async rejectRequest(id) {
+    const { data: existing, error: fetchErr } = await supabase.from("candidates").select("approval_status").eq("id", id).single();
+    throwIfError(fetchErr);
+
+    if (existing.approval_status === "pending_add") {
+      // A rejected new client never went live — remove it entirely.
+      const { error } = await supabase.from("candidates").delete().eq("id", id);
+      throwIfError(error);
+      return { deleted: true, id };
+    }
+
+    // pending_edit or pending_delete: revert to the last approved state.
+    const { data, error } = await supabase
+      .from("candidates")
+      .update({ approval_status: "approved", pending_data: null, requested_by: null, requested_at: null })
+      .eq("id", id)
+      .select()
+      .single();
+    throwIfError(error);
+    return rowToCandidate(data);
   },
 };
 
