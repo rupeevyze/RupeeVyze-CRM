@@ -49,6 +49,22 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "name, email, and password are required" }), { status: 400, headers: corsHeaders });
     }
 
+    // If no existing candidate/advisor record was chosen to link, create a
+    // minimal one now so this advisor has an advisor_candidate_id to be
+    // scoped to (RLS policies require this — a null id can never match).
+    let resolvedCandidateId = candidateId;
+    if (!resolvedCandidateId) {
+      const { data: newCandidate, error: candidateErr } = await adminClient
+        .from("candidates")
+        .insert({ name, email, lead_type: "Advisor", workflow_stage: "Active Advisor", lead_status: "Active" })
+        .select()
+        .single();
+      if (candidateErr) {
+        return new Response(JSON.stringify({ error: `Failed to create linked advisor record: ${candidateErr.message}` }), { status: 400, headers: corsHeaders });
+      }
+      resolvedCandidateId = String(newCandidate.id);
+    }
+
     const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
       email,
       password,
@@ -64,7 +80,7 @@ Deno.serve(async (req) => {
       name,
       email,
       role: "advisor",
-      advisor_candidate_id: candidateId ? String(candidateId) : null,
+      advisor_candidate_id: resolvedCandidateId,
     });
 
     if (insertErr) {
@@ -73,7 +89,7 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, userId: newUser.user.id }),
+      JSON.stringify({ success: true, userId: newUser.user.id, candidateId: resolvedCandidateId }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

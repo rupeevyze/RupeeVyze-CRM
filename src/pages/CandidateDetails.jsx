@@ -59,7 +59,7 @@ const clientTabs = [
 function CandidateDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { candidates, updateCandidateStage, updateCandidateNote, updateCandidate, deleteCandidate, advisorWorkflowStages } = useCrm();
+  const { candidates, updateCandidateStage, updateCandidateNote, updateCandidate, deleteCandidate, advisorWorkflowStages, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, resubmitClientRequest } = useCrm();
   const { currentUser, isAdmin, isAdvisor, canEditClient, canDeleteClient, canAssignClient } = useAuth();
   const [activeTab, setActiveTab] = useState("Overview");
   const [note, setNote] = useState("");
@@ -106,6 +106,11 @@ function CandidateDetails() {
   const isAdvisorLead = candidate?.leadType === "Advisor" || candidate?.leadType === "Recruitment";
   const isActiveClient = !isAdvisorLead && candidate?.workflowStage === "Active Client";
   const recordType = getRecordType(candidate);
+
+  const approvalStatus = candidate?.approvalStatus || "approved";
+  const isPendingState = approvalStatus.startsWith("pending_");
+  const isRejectedState = approvalStatus.startsWith("rejected_");
+  const isOwnClientRecord = recordType === "client" && String(candidate?.assignedAdvisorId || "") === String(currentUser?.id || "");
 
   const tabs = useMemo(() => {
     if (recordType === "advisor") return advisorTabs;
@@ -335,15 +340,36 @@ function CandidateDetails() {
           <p>{recordType === "client" ? "360° Client Profile" : recordType === "advisor" ? "360° Advisor Profile" : "360° Lead Profile"} • {candidate.leadId || candidate.advisorCode || candidate.email} • {candidate.city || candidate.phone}</p>
         </div>
         <div className="page-actions">
-          {canEditClient(candidate) && (
+          {recordType === "client" && isPendingState ? (
+            isAdmin ? (
+              <>
+                <button type="button" className="button secondary" style={{ color: "#16a34a", borderColor: "#16a34a" }} onClick={async () => { await approveClientRequest(candidate.id); }}>
+                  Approve
+                </button>
+                <button type="button" className="button secondary" style={{ color: "#dc2626", borderColor: "#dc2626" }} onClick={async () => { await rejectClientRequest(candidate.id, window.prompt("Reason for rejection (optional):") || ""); }}>
+                  Reject
+                </button>
+              </>
+            ) : (
+              <span style={{ color: "#92400e", fontSize: "0.875rem", alignSelf: "center" }}>Awaiting admin approval</span>
+            )
+          ) : recordType === "client" && isRejectedState && isOwnClientRecord ? (
             <button type="button" className="button secondary" onClick={() => setEditOpen(true)}>
-              Edit
+              Revise &amp; Resubmit
             </button>
-          )}
-          {canDeleteClient(candidate) && (
-            <button type="button" className="button secondary" style={{ color: "#dc2626", borderColor: "#dc2626" }} onClick={() => setDeleteConfirmOpen(true)}>
-              Delete
-            </button>
+          ) : (
+            <>
+              {canEditClient(candidate) && (
+                <button type="button" className="button secondary" onClick={() => setEditOpen(true)}>
+                  Edit
+                </button>
+              )}
+              {canDeleteClient(candidate) && (
+                <button type="button" className="button secondary" style={{ color: "#dc2626", borderColor: "#dc2626" }} onClick={() => setDeleteConfirmOpen(true)}>
+                  Delete
+                </button>
+              )}
+            </>
           )}
           <button type="button" className="button secondary" onClick={() => previousLead && navigate(`/adviser/profile/${previousLead.id}`)} disabled={!previousLead}>
             ← Previous Lead
@@ -353,6 +379,13 @@ function CandidateDetails() {
           </button>
         </div>
       </div>
+
+      {recordType === "client" && isRejectedState && isOwnClientRecord && candidate.rejectionReason && (
+        <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "0.75rem 1rem", margin: "0 0 1rem" }}>
+          <strong style={{ color: "#b91c1c" }}>Rejected: </strong>
+          <span style={{ color: "#7f1d1d" }}>{candidate.rejectionReason}</span>
+        </div>
+      )}
 
       <div className="tab-row">
         {tabs.map((tab) => (
@@ -1126,9 +1159,17 @@ function CandidateDetails() {
           stageOptions={recordType === "insurance_customer_lead" ? undefined : []}
           stageColors={{}}
           onClose={() => setEditOpen(false)}
-          onSave={(id, payload) => {
-            if (!canEditClient(candidate)) return;
-            updateCandidate(id, payload);
+          onSave={async (id, payload) => {
+            if (!canEditClient(candidate) && !(recordType === "client" && isRejectedState && isOwnClientRecord)) return;
+            if (recordType === "client" && isAdvisor) {
+              if (isRejectedState) {
+                await resubmitClientRequest(id, payload);
+              } else {
+                await submitClientEdit(id, payload);
+              }
+            } else {
+              updateCandidate(id, payload);
+            }
             setEditOpen(false);
           }}
         />
@@ -1148,9 +1189,14 @@ function CandidateDetails() {
                 style={{ color: "#dc2626", borderColor: "#dc2626" }}
                 onClick={async () => {
                   if (!canDeleteClient(candidate)) return;
-                  await deleteCandidate(candidate.id);
-                  setDeleteConfirmOpen(false);
-                  navigate(-1);
+                  if (recordType === "client" && isAdvisor) {
+                    await submitClientDelete(candidate.id);
+                    setDeleteConfirmOpen(false);
+                  } else {
+                    await deleteCandidate(candidate.id);
+                    setDeleteConfirmOpen(false);
+                    navigate(-1);
+                  }
                 }}
               >
                 Delete

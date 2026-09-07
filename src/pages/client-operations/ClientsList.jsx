@@ -41,12 +41,19 @@ import { useAuth } from "../../authContext.jsx";
 const emptyForm = { name: "", mobile: "", city: "", email: "" };
 function ApprovalBadge({ status }) {
   if (!status || status === "approved") return null;
-  const label = status === "pending_add" ? "Pending Add" : status === "pending_edit" ? "Pending Edit" : "Pending Delete";
-  return <Chip label={label} size="small" color="warning" sx={{ ml: 1 }} />;
+  const labels = {
+    pending_add: "Pending Add",
+    pending_edit: "Pending Edit",
+    pending_delete: "Pending Delete",
+    rejected_add: "Rejected — Needs Revision",
+    rejected_edit: "Rejected — Needs Revision",
+  };
+  const color = status.startsWith("rejected") ? "error" : "warning";
+  return <Chip label={labels[status] || status} size="small" color={color} sx={{ ml: 1 }} />;
 }
 
 export default function ClientsList() {
-  const { candidates: allCandidates, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, addCandidate, updateCandidate, deleteCandidate } = useCrm();
+  const { candidates: allCandidates, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, resubmitClientRequest, addCandidate, updateCandidate, deleteCandidate } = useCrm();
   const { currentUser, isAdmin, isAdvisor } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -170,9 +177,13 @@ export default function ClientsList() {
     }
     setSubmitting(true);
     try {
+      const isRejectedState = (editTarget.approvalStatus || "").startsWith("rejected_");
       if (isAdmin) {
         await updateCandidate(editTarget.candidateId, form);
         setFormSuccess("Client updated.");
+      } else if (isRejectedState) {
+        await resubmitClientRequest(editTarget.candidateId, form);
+        setFormSuccess("Resubmitted for admin approval.");
       } else {
         await submitClientEdit(editTarget.candidateId, form);
         setFormSuccess("Edit submitted for admin approval.");
@@ -291,8 +302,12 @@ export default function ClientsList() {
                 </TableRow>
               ) : (
                 filteredClients.map((client) => {
-                  const canEditDelete = isAdmin || (isAdvisor && String(client.assignedAdvisorId) === String(currentUser?.id));
-                  const hasPending = client.approvalStatus !== "approved";
+                  const isOwnClient = isAdvisor && String(client.assignedAdvisorId) === String(currentUser?.id);
+                  const isPendingState = (client.approvalStatus || "").startsWith("pending_");
+                  const isRejectedState = (client.approvalStatus || "").startsWith("rejected_");
+                  const adminCanEditDirectly = isAdmin && !isPendingState;
+                  const advisorCanEditApproved = isOwnClient && client.approvalStatus === "approved";
+                  const advisorCanRevise = isOwnClient && isRejectedState;
                   return (
                     <TableRow key={client.clientId || client.candidateId} hover>
                       <TableCell>{client.clientId || client.candidateId}</TableCell>
@@ -303,17 +318,31 @@ export default function ClientsList() {
                       <TableCell>
                         <Chip label={client.finalStatus || "Active Client"} size="small" color={client.finalStatus === "Active Client" ? "success" : client.finalStatus === "Lost" ? "error" : "info"} />
                         <ApprovalBadge status={client.approvalStatus} />
+                        {isRejectedState && client.raw?.rejectionReason && (
+                          <Tooltip title={client.raw.rejectionReason}>
+                            <Typography component="span" variant="caption" sx={{ ml: 1, color: "#b91c1c", cursor: "help" }}>(why?)</Typography>
+                          </Tooltip>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Stack direction="row" spacing={1} alignItems="center">
                           <Link className="button secondary" to={`/adviser/profile/${client.candidateId}`}>View</Link>
-                          {canEditDelete && !hasPending && (
+                          {adminCanEditDirectly && (
                             <>
                               <Button size="small" variant="outlined" onClick={() => openEdit(client)}>Edit</Button>
                               <Button size="small" variant="text" color="error" onClick={() => handleDeleteRequest(client)}>Delete</Button>
                             </>
                           )}
-                          {isAdmin && hasPending && (
+                          {advisorCanEditApproved && (
+                            <>
+                              <Button size="small" variant="outlined" onClick={() => openEdit(client)}>Edit</Button>
+                              <Button size="small" variant="text" color="error" onClick={() => handleDeleteRequest(client)}>Delete</Button>
+                            </>
+                          )}
+                          {advisorCanRevise && (
+                            <Button size="small" variant="contained" onClick={() => openEdit(client)}>Revise &amp; Resubmit</Button>
+                          )}
+                          {isAdmin && isPendingState && (
                             <>
                               <Tooltip title="Approve">
                                 <Button size="small" variant="contained" color="success" onClick={() => handleApprove(client)}><CheckIcon fontSize="small" /></Button>

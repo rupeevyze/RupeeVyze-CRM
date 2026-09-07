@@ -72,6 +72,7 @@ function rowToCandidate(r) {
     pendingData: r.pending_data || null,
     requestedBy: r.requested_by || null,
     requestedAt: r.requested_at || null,
+    rejectionReason: r.rejection_reason || null,
   };
 }
 
@@ -199,7 +200,7 @@ export const candidatesApi = {
     }
 
     if (existing.approval_status === "pending_edit") {
-      const row = { ...candidateToRow({ ...rowToCandidate(existing), ...existing.pending_data }), approval_status: "approved", pending_data: null, requested_by: null, requested_at: null };
+      const row = { ...candidateToRow({ ...rowToCandidate(existing), ...existing.pending_data }), approval_status: "approved", pending_data: null, requested_by: null, requested_at: null, rejection_reason: null };
       const { data, error } = await supabase.from("candidates").update(row).eq("id", id).select().single();
       throwIfError(error);
       return rowToCandidate(data);
@@ -208,7 +209,7 @@ export const candidatesApi = {
     // pending_add
     const { data, error } = await supabase
       .from("candidates")
-      .update({ approval_status: "approved", requested_by: null, requested_at: null })
+      .update({ approval_status: "approved", requested_by: null, requested_at: null, rejection_reason: null })
       .eq("id", id)
       .select()
       .single();
@@ -216,22 +217,74 @@ export const candidatesApi = {
     return rowToCandidate(data);
   },
 
-  // Admin rejects a pending add/edit/delete.
-  async rejectRequest(id) {
+  // Admin rejects a pending add/edit/delete. Rejected adds/edits stay visible
+  // to the advisor (with their submitted data intact) so they can revise and
+  // resubmit; rejected deletes simply revert to the approved state.
+  async rejectRequest(id, reason) {
     const { data: existing, error: fetchErr } = await supabase.from("candidates").select("approval_status").eq("id", id).single();
     throwIfError(fetchErr);
 
     if (existing.approval_status === "pending_add") {
-      // A rejected new client never went live — remove it entirely.
-      const { error } = await supabase.from("candidates").delete().eq("id", id);
+      const { data, error } = await supabase
+        .from("candidates")
+        .update({ approval_status: "rejected_add", rejection_reason: reason || null })
+        .eq("id", id)
+        .select()
+        .single();
       throwIfError(error);
-      return { deleted: true, id };
+      return rowToCandidate(data);
     }
 
-    // pending_edit or pending_delete: revert to the last approved state.
+    if (existing.approval_status === "pending_edit") {
+      const { data, error } = await supabase
+        .from("candidates")
+        .update({ approval_status: "rejected_edit", rejection_reason: reason || null })
+        .eq("id", id)
+        .select()
+        .single();
+      throwIfError(error);
+      return rowToCandidate(data);
+    }
+
+    // pending_delete: nothing to revise, just revert to approved.
     const { data, error } = await supabase
       .from("candidates")
-      .update({ approval_status: "approved", pending_data: null, requested_by: null, requested_at: null })
+      .update({ approval_status: "approved", pending_data: null, requested_by: null, requested_at: null, rejection_reason: reason || null })
+      .eq("id", id)
+      .select()
+      .single();
+    throwIfError(error);
+    return rowToCandidate(data);
+  },
+
+  // Advisor revises a rejected add/edit and resubmits it for approval.
+  async resubmitRequest(id, updatedPayload, requestedByUserId) {
+    const { data: existing, error: fetchErr } = await supabase.from("candidates").select("approval_status").eq("id", id).single();
+    throwIfError(fetchErr);
+
+    if (existing.approval_status === "rejected_add") {
+      const row = {
+        ...candidateToRow(updatedPayload),
+        approval_status: "pending_add",
+        rejection_reason: null,
+        requested_by: requestedByUserId ? String(requestedByUserId) : null,
+        requested_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase.from("candidates").update(row).eq("id", id).select().single();
+      throwIfError(error);
+      return rowToCandidate(data);
+    }
+
+    // rejected_edit: update the pending proposal, not the live fields.
+    const { data, error } = await supabase
+      .from("candidates")
+      .update({
+        pending_data: updatedPayload,
+        approval_status: "pending_edit",
+        rejection_reason: null,
+        requested_by: requestedByUserId ? String(requestedByUserId) : null,
+        requested_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .select()
       .single();

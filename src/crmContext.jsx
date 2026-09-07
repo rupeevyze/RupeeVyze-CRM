@@ -566,10 +566,10 @@ export function CrmProvider({ children }) {
     }
   }, [isAdmin]);
 
-  const rejectClientRequest = useCallback(async (candidateId) => {
+  const rejectClientRequest = useCallback(async (candidateId, reason) => {
     if (!isAdmin) return;
     try {
-      const result = await candidatesApi.rejectRequest(candidateId);
+      const result = await candidatesApi.rejectRequest(candidateId, reason);
       if (result.deleted) {
         setCandidates((prev) => prev.filter((c) => String(c.id) !== String(candidateId)));
       } else {
@@ -581,6 +581,18 @@ export function CrmProvider({ children }) {
       throw err;
     }
   }, [isAdmin]);
+
+  // Advisor revises a rejected add/edit and resubmits it for approval.
+  const resubmitClientRequest = useCallback(async (candidateId, updatedPayload) => {
+    try {
+      const result = await candidatesApi.resubmitRequest(candidateId, updatedPayload, currentUser?.authId || currentUser?.id);
+      setCandidates((prev) => prev.map((c) => String(c.id) === String(candidateId) ? result : c));
+      return result;
+    } catch (err) {
+      console.error("Failed to resubmit client request in Supabase:", err.message);
+      throw err;
+    }
+  }, [currentUser]);
 
   const addClient = useCallback(async (client) => {
     try {
@@ -911,6 +923,7 @@ export function CrmProvider({ children }) {
     submitClientDelete,
     approveClientRequest,
     rejectClientRequest,
+    resubmitClientRequest,
     addClient,
     updateClient,
     markFollowUpDone,
@@ -966,7 +979,7 @@ export function CrmProvider({ children }) {
     clearAllCrmData,
     clearLeadData
   }), [candidates, clients, settings, selectedConfig, selectedConfigId, performanceRecords, overridePayoutRecords, policies, claims, rewards, serviceRequests, roles, permissions, loading, teamMembers, derivedRecruiterNames, activeAdvisors, performanceSummary, overrideRecordsDerived, importHistory,
-    updateCandidateStage, updateCandidate, addCandidate, importCandidates, deleteCandidate, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, addClient, updateClient, markFollowUpDone, updateCandidateNote, setSettings, addPerformanceRecord, updatePerformanceRecord, saveOverridePayoutRecords, importPolicies, importClaims, importTeamMembers, importRewards, importFollowups, importServiceRequests, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole,     addPermission, updatePermission, deletePermission, addImportRecord, removeImportRecord, removeImportedCandidates, clearAllCrmData, clearLeadData]);
+    updateCandidateStage, updateCandidate, addCandidate, importCandidates, deleteCandidate, submitClient, submitClientEdit, submitClientDelete, approveClientRequest, rejectClientRequest, resubmitClientRequest, addClient, updateClient, markFollowUpDone, updateCandidateNote, setSettings, addPerformanceRecord, updatePerformanceRecord, saveOverridePayoutRecords, importPolicies, importClaims, importTeamMembers, importRewards, importFollowups, importServiceRequests, addTeamMember, updateTeamMember, deleteTeamMember, addRole, updateRole, deleteRole,     addPermission, updatePermission, deletePermission, addImportRecord, removeImportRecord, removeImportedCandidates, clearAllCrmData, clearLeadData]);
 
   return <CrmContext.Provider value={value}>{children}</CrmContext.Provider>;
 }
