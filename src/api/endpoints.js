@@ -259,12 +259,17 @@ export const candidatesApi = {
 
   // Advisor revises a rejected add/edit and resubmits it for approval.
   async resubmitRequest(id, updatedPayload, requestedByUserId) {
-    const { data: existing, error: fetchErr } = await supabase.from("candidates").select("approval_status").eq("id", id).single();
+    const { data: existingRow, error: fetchErr } = await supabase.from("candidates").select("*").eq("id", id).single();
     throwIfError(fetchErr);
+    const existing = rowToCandidate(existingRow);
 
-    if (existing.approval_status === "rejected_add") {
+    if (existing.approvalStatus === "rejected_add") {
+      // Merge the advisor's edits into the existing record rather than
+      // replacing it wholesale — this preserves fields the edit form
+      // doesn't touch (assignedAdvisorId, leadType, etc.), which RLS
+      // depends on to authorize the update.
       const row = {
-        ...candidateToRow(updatedPayload),
+        ...candidateToRow({ ...existing, ...updatedPayload }),
         approval_status: "pending_add",
         rejection_reason: null,
         requested_by: requestedByUserId ? String(requestedByUserId) : null,
