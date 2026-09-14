@@ -8,8 +8,8 @@ import CandidateModal from "../components/CandidateModal.jsx";
 import CandidateForm from "../components/CandidateForm.jsx";
 
 function Pipeline({ detailsPrefix }) {
-  const { candidates: allCandidates, updateCandidateStage, updateCandidate, updateCandidateNote, addCandidate, pipelineStages, sources, recruiterNames, stageBadge, advisorWorkflowStages, customerWorkflowStages } = useCrm();
-  const { currentUser } = useAuth();
+  const { candidates: allCandidates, updateCandidateStage, updateCandidate, updateCandidateNote, addCandidate, submitClient, submitClientEdit, resubmitClientRequest, pipelineStages, sources, recruiterNames, stageBadge, advisorWorkflowStages, customerWorkflowStages } = useCrm();
+  const { currentUser, isAdvisor } = useAuth();
   const candidates = useMemo(() => filterByRole(allCandidates, currentUser), [allCandidates, currentUser]);
   const detailsPathPrefix = detailsPrefix || "/adviser/profile";
   const [search, setSearch] = useState("");
@@ -194,8 +194,17 @@ function Pipeline({ detailsPrefix }) {
             updateCandidateNote(id, note);
             setActiveCandidate(null);
           }}
-          onSave={(id, payload) => {
-            updateCandidate(id, payload);
+          onSave={async (id, payload) => {
+            if (isAdvisor && String(activeCandidate?.assignedAdvisorId || "") === String(currentUser?.id || "")) {
+              const status = activeCandidate?.approvalStatus || "approved";
+              if (status.startsWith("rejected_")) {
+                await resubmitClientRequest(id, payload);
+              } else {
+                await submitClientEdit(id, payload);
+              }
+            } else {
+              updateCandidate(id, payload);
+            }
             setActiveCandidate(null);
           }}
         />
@@ -205,7 +214,11 @@ function Pipeline({ detailsPrefix }) {
         open={formOpen}
         onClose={() => setFormOpen(false)}
         onAdd={async (candidateData) => {
-          await addCandidate(candidateData);
+          if (isAdvisor) {
+            await submitClient(candidateData);
+          } else {
+            await addCandidate(candidateData);
+          }
           setFormOpen(false);
         }}
         pipelineStages={pipelineStages}
