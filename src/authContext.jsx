@@ -4,6 +4,7 @@ import { supabase } from "./supabaseClient.js";
 const ADVISOR_ALLOWED_PATHS = [
   "/adviser/dashboard",
   "/adviser/client-operations",
+  "/adviser/lead-management",
 ];
 
 const AuthContext = createContext(null);
