@@ -14,6 +14,7 @@ const allNavItems = [
 
 const ADVISOR_NAV_ITEMS = [
   { label: "Dashboard", to: "/adviser/dashboard" },
+  { label: "Lead Management", to: "/adviser/lead-management" },
   { label: "Client Operations", to: "/adviser/client-operations" },
 ];
 
