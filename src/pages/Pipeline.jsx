@@ -8,8 +8,8 @@ import CandidateModal from "../components/CandidateModal.jsx";
 import CandidateForm from "../components/CandidateForm.jsx";
 
 function Pipeline({ detailsPrefix }) {
-  const { candidates: allCandidates, updateCandidateStage, updateCandidate, updateCandidateNote, addCandidate, submitClient, submitClientEdit, resubmitClientRequest, pipelineStages, sources, recruiterNames, stageBadge, advisorWorkflowStages, customerWorkflowStages } = useCrm();
-  const { currentUser, isAdvisor } = useAuth();
+  const { candidates: allCandidates, updateCandidateStage, updateCandidate, updateCandidateNote, addCandidate, submitClient, submitClientEdit, resubmitClientRequest, approveClientRequest, rejectClientRequest, pipelineStages, sources, recruiterNames, stageBadge, advisorWorkflowStages, customerWorkflowStages } = useCrm();
+  const { currentUser, isAdvisor, isAdmin } = useAuth();
   const candidates = useMemo(() => filterByRole(allCandidates, currentUser), [allCandidates, currentUser]);
   const detailsPathPrefix = detailsPrefix || "/adviser/profile";
   const [search, setSearch] = useState("");
@@ -175,6 +175,9 @@ function Pipeline({ detailsPrefix }) {
               onOpen={setActiveCandidate}
               stageColor={stageBadge[candidate.workflowStage] || "#64748b"}
               detailsPrefix={detailsPathPrefix}
+              isAdmin={isAdmin}
+              onApprove={(c) => approveClientRequest(c.id)}
+              onReject={(c) => rejectClientRequest(c.id, window.prompt("Reason for rejection (optional):") || "")}
             />
           ))
         )}

@@ -8,13 +8,23 @@ const priorityConfig = {
   Low: { color: "#16a34a", bg: "#f0fdf4", label: "Low" },
 };
 
-export default function CandidateCard({ candidate, onOpen, stageColor, detailsPrefix = "/adviser/profile" }) {
+export default function CandidateCard({ candidate, onOpen, stageColor, detailsPrefix = "/adviser/profile", isAdmin, onApprove, onReject }) {
   const navigate = useNavigate();
   const priority = candidate.priority || candidate.followUp?.priority || "Medium";
   const pc = priorityConfig[priority] || priorityConfig.Medium;
   const dueDate = candidate.dueDate || "";
   const overdueDue = isOverdueDueDate(dueDate);
   const dueToday = isDueToday(dueDate);
+  const approvalStatus = candidate.approvalStatus || "approved";
+  const isPending = approvalStatus.startsWith("pending_");
+  const isRejected = approvalStatus.startsWith("rejected_");
+  const statusLabels = {
+    pending_add: "Pending Add",
+    pending_edit: "Pending Edit",
+    pending_delete: "Pending Delete",
+    rejected_add: "Rejected",
+    rejected_edit: "Rejected",
+  };
 
   return (
     <div className="candidate-card" onClick={() => navigate(`${detailsPrefix}/${candidate.id}`)}>
@@ -26,6 +36,11 @@ export default function CandidateCard({ candidate, onOpen, stageColor, detailsPr
         <span className="badge" style={{ backgroundColor: stageColor }}>
           {candidate.workflowStage}
         </span>
+        {(isPending || isRejected) && (
+          <span className="badge" style={{ backgroundColor: isRejected ? "#dc2626" : "#d97706" }}>
+            {statusLabels[approvalStatus] || approvalStatus}
+          </span>
+        )}
         {candidate.policyIssued === "Yes" && (
           <span className="badge" style={{ backgroundColor: "#16a34a" }}>Issued</span>
         )}
@@ -59,16 +74,39 @@ export default function CandidateCard({ candidate, onOpen, stageColor, detailsPr
         >
           View Details
         </Link>
-        <button
-          type="button"
-          className="button primary"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpen(candidate);
-          }}
-        >
-          Edit
-        </button>
+        {isAdmin && isPending ? (
+          <>
+            <button
+              type="button"
+              className="button primary"
+              style={{ background: "#16a34a" }}
+              onClick={(event) => { event.stopPropagation(); onApprove && onApprove(candidate); }}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              style={{ color: "#dc2626", borderColor: "#dc2626" }}
+              onClick={(event) => { event.stopPropagation(); onReject && onReject(candidate); }}
+            >
+              Reject
+            </button>
+          </>
+        ) : (
+          !(isPending && !isAdmin) && (
+            <button
+              type="button"
+              className="button primary"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpen(candidate);
+              }}
+            >
+              {isRejected ? "Revise" : "Edit"}
+            </button>
+          )
+        )}
       </div>
     </div>
   );
