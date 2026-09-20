@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { useAuth } from "./authContext.jsx";
 import Layout from "./components/Layout";
 import Login from "./pages/Login.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import Dashboard from "./pages/Dashboard/index.jsx";
 import LeadManagementModule from "./pages/lead-management/LeadManagementModule.jsx";
 import AdvisorOperationsModule from "./pages/advisor-operations/AdvisorOperationsModule.jsx";
@@ -28,6 +29,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route
           path="/*"
           element={
