@@ -52,11 +52,14 @@ Deno.serve(async (req) => {
     // If no existing candidate/advisor record was chosen to link, create a
     // minimal one now so this advisor has an advisor_candidate_id to be
     // scoped to (RLS policies require this — a null id can never match).
+    // workflow_stage must be "Business Started" (a real stage in the
+    // advisor recruitment workflow) — anything else won't be recognized
+    // as an active advisor anywhere else in the app.
     let resolvedCandidateId = candidateId;
     if (!resolvedCandidateId) {
       const { data: newCandidate, error: candidateErr } = await adminClient
         .from("candidates")
-        .insert({ name, email, lead_type: "Advisor", workflow_stage: "Active Advisor", lead_status: "Active" })
+        .insert({ name, email, lead_type: "Advisor", workflow_stage: "Business Started", lead_status: "Active" })
         .select()
         .single();
       if (candidateErr) {

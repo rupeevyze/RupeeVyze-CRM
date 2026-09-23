@@ -13,6 +13,17 @@ import CandidateDetails from "./pages/CandidateDetails.jsx";
 
 function ProtectedRoute({ children, modulePath }) {
   const { currentUser, canViewModule, loading } = useAuth();
+
+  // Safety net: if the URL carries a password-recovery token (from the
+  // reset-password email link) but somehow isn't on /reset-password —
+  // e.g. a routing quirk on first load — force it there immediately.
+  // A recovery session is otherwise indistinguishable from a normal
+  // login, which would let someone skip setting a new password entirely.
+  if (typeof window !== "undefined" && window.location.hash.includes("type=recovery") && window.location.pathname !== "/reset-password") {
+    window.location.replace(`/reset-password${window.location.hash}`);
+    return null;
+  }
+
   if (loading) return null; // avoid flashing to /login while session is still resolving
   if (!currentUser) return <Navigate to="/login" replace />;
   if (modulePath && !canViewModule(modulePath)) return <Navigate to="/adviser/dashboard" replace />;
